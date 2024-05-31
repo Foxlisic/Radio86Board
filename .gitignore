@@ -1,0 +1,6 @@
+applicate/
+*.gtkw
+*.hex
+*.qqq
+*.vcd
+vendor/
