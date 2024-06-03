@@ -5,9 +5,13 @@ module KR580VM80ALite
     input               ce,
     output              m0,
     output      [15:0]  address,
+    output reg  [ 7:0]  port,
     input       [ 7:0]  in,
+    input       [ 7:0]  port_in,
     output reg  [ 7:0]  out,
-    output reg          we
+    output reg          we,
+    output reg          port_we,
+    output reg          iff1
 );
 
 assign address = sw ? cp : pc;
@@ -16,11 +20,15 @@ assign m0 = (t == 0);
 localparam
     CF = 0, PF = 2, HF = 4, ZF = 6, SF = 7;
 
+localparam
+    ADD = 0, ADC = 1, SUB = 2, SBB = 3,
+    AND = 4, XOR = 5, OR  = 6, CMP = 7;
+
 // ----------------------------------------------
 reg [15:0]  pc;
 reg [15:0]  bc  = 16'h10FF,
             de  = 16'hBEEF,
-            hl  = 16'hF803,
+            hl  = 16'hFF13,
             sp  = 16'h00FF;
 reg [ 7:0]  a   = 8'h9A,
             //       NZ H P C
@@ -59,43 +67,46 @@ wire [15:0] pcn = pc + 1;
 wire [15:0] cpn = cp + 1;
 wire        m53 = opc[5:3] == 3'b110;
 wire        m20 = opc[2:0] == 3'b110;
-wire        daa1 = psw[4] || a[3:0] > 9;
-wire        daa2 = psw[0] || a[7:4] > 9 || (a[7:4] >= 9 && a[3:0] > 9);
+wire        daa1 = psw[HF] || a[3:0] > 9;
+wire        daa2 = psw[CF] || a[7:4] > 9 || (a[7:4] >= 9 && a[3:0] > 9);
+wire [3:0]  cond = {psw[SF], psw[PF], psw[CF], psw[ZF]};
+wire        ccc  = (cond[ opc[5:4] ] == opc[3]) || (opc == 8'hC9) || (opc == 8'hCD);
 // ----------------------------------------------
 wire [8:0]  alur =
-    opc[5:3] == 3'h0 ? a + op20 :             // ADD
-    opc[5:3] == 3'h1 ? a + op20 + psw[CF] :   // ADC
-    opc[5:3] == 3'h3 ? a - op20 - psw[CF] :   // SBB
-    opc[5:3] == 3'h4 ? a & op20 :             // ANA
-    opc[5:3] == 3'h5 ? a ^ op20 :             // XRA
-    opc[5:3] == 3'h6 ? a | op20 :             // ORA
-                       a - op20;              // SUB|CMP
+    opc[5:3] == ADD ? a + op20 :             // ADD
+    opc[5:3] == ADC ? a + op20 + psw[CF] :   // ADC
+    opc[5:3] == SBB ? a - op20 - psw[CF] :   // SBB
+    opc[5:3] == AND ? a & op20 :             // ANA
+    opc[5:3] == XOR ? a ^ op20 :             // XRA
+    opc[5:3] == OR  ? a | op20 :             // ORA
+                      a - op20;              // SUB|CMP
 
 wire sf =   alur[7];
 wire zf =   alur[7:0] == 0;
 wire hf =   a[4] ^ op20[4] ^ alur[4];
+wire af =  (a[4] | op20[4]) & (opc[5:3] == AND);
 wire pf = ~^alur[7:0];
 wire cf =   alur[8];
-wire hf_ana = a[4] | op20[4];
 
 wire [7:0] aluf =
-    opc[5:3] == 3'h4 ?  {sf, zf, 1'b0, hf_ana, 1'b0, pf, 1'b1, 1'b0} : // ANA
-    opc[5:3] == 3'h5 ||
-    opc[5:3] == 3'h6 ?  {sf, zf, 1'b0, 1'b0,   1'b0, pf, 1'b1, 1'b0} : // XRA, ORA
-                        {sf, zf, 1'b0, hf,     1'b0, pf, 1'b1, cf}; // ADD, ADC, SUB, SBB, CMP
+    opc[5:3] == AND || opc[5:3] == XOR || opc[5:3] == OR ?
+        {sf, zf, 1'b0, af, 1'b0, pf, 1'b1, 1'b0} : // AND, XOR, OR
+        {sf, zf, 1'b0, hf, 1'b0, pf, 1'b1,   cf};  // ADD, ADC, SUB, SBB, CMP
 
 always @(posedge clock)
 if (reset_n == 0) begin
     t  <= 0;        // Установить чтение кода на начало
     sw <= 0;        // Позиционировать память к PC
     pc <= 16'hF800; // Указатель на программу "Монитор"
+    iff1 <= 0;       // Отключение прерываний
 end
 else if (ce) begin
 
-    t  <= t + 1;      // Счетчик микрооперации
-    b  <= 0;          // Выключить запись в регистр (по умолчанию) 8bit
-    w  <= 0;          // Выключить запись в регистр (по умолчанию) 16bit
-    we <= 0;          // Аналогично, выключить запись в память (по умолчанию)
+    t  <= t + 1;    // Счетчик микрооперации
+    b  <= 0;        // Выключить запись в регистр (по умолчанию) 8bit
+    w  <= 0;        // Выключить запись в регистр (по умолчанию) 16bit
+    we <= 0;        // Аналогично, выключить запись в память (по умолчанию)
+    port_we <= 0;   // Запись в порт
 
     // Запись опкода на первом такте выполнения инструкции
     if (m0) begin opcode <= in; pc <= pcn; end
@@ -236,7 +247,7 @@ else if (ce) begin
             2'b11: d <= {psw[CF], a[7:1]};  // RAR
             endcase
 
-            psw[0] <= a[opc[3] ? 0 : 7];
+            psw[CF] <= a[opc[3] ? 0 : 7];
 
         end
 
@@ -273,7 +284,7 @@ else if (ce) begin
     // 4T [37] STC [3F] CMC
     8'b0011_x111: case (t)
 
-        0: begin psw[0] <= opc[3] ? ~psw[0] : 1'b1; end
+        0: begin psw[CF] <= opc[3] ? ~psw[CF] : 1'b1; end
         3: begin t <= 0; end
 
     endcase
@@ -302,9 +313,137 @@ else if (ce) begin
     8'b10xx_xxxx: case (t)
 
         0: begin cp <= hl; sw <= 1; end
-        1: begin d  <= alur; b <= (opc[5:3] != 3'b111); n <= 7; psw <= aluf; end
+        1: begin d  <= alur; b <= (opc[5:3] != CMP); n <= 7; psw <= aluf; end
         4: begin sw <= 0; t <= m20 ? 5 : 0; end
         6: begin t  <= 0; end
+
+    endcase
+
+    // ==========================
+    // ДИАПАЗОН ИНСТРУКЦИИ С0-FF
+    // ==========================
+
+    // 5/11T RET ccc
+    8'b11xx_x000,
+    8'b1100_1001: case (t)
+
+        0: begin d <= sp + 2; w <= ccc; n <= 3; sw <= 1; cp <= sp; end
+        1: begin d[ 7:0] <= in; cp <= cpn; end
+        2: begin d[15:8] <= in; sw <= 0; end
+        4: begin t <= ccc ? 5 : 0; end
+        10: begin t <= 0; pc <= d; end
+
+    endcase
+    // 11T POP
+    8'b11xx_0001: case (t)
+
+        0: begin d <= sp + 2; w <= 1; n <= 3; sw <= 1; cp <= sp; end
+        1: begin d[ 7:0] <= in; cp <= cpn; end
+        2: begin d[15:8] <= in; sw <= 0; n <= opc[5:4]; w <= opc[5:4] != 3; end
+        3: begin if (opc[5:4] == 3) begin d[7:0] <= d[15:8]; psw <= d[7:0]; b <= 1; n <= 7; end end
+        10: begin t <= 0; end
+
+    endcase
+    // 5T [E9] PCHL
+    8'b1110_1001: case (t)
+
+        4: begin pc <= hl; t <= 0; end
+
+    endcase
+    // 5T [F9] SPHL
+    8'b1111_1001: case (t)
+
+        0: begin d <= hl; w <= 1; n <= 3; end
+        4: begin t <= 0; end
+
+    endcase
+    // 10T JMP ccc, **
+    8'b11xx_x010,
+    8'b1100_0011: case (t)
+
+        1: begin cp[ 7:0] <= in; pc <= pcn; end
+        2: begin cp[15:8] <= in; pc <= pcn; end
+        9: begin t <= 0; if (ccc || opc[0]) pc <= cp; end
+
+    endcase
+    // 4T DI, EI
+    8'b1111_x011: case (t)
+
+        0: begin iff1 <= opc[3]; end
+        3: begin t <= 0; end
+
+    endcase
+    // 10T OUT (*), A
+    8'b1101_0011: case (t)
+
+        1: begin port <= in; port_we <= 1; out <= a; pc <= pcn; end
+        9: begin t <= 0; end
+
+    endcase
+    // 10T IN A, (*)
+    8'b1101_1011: case (t)
+
+        1: begin port <= in; pc <= pcn; end
+        2: begin b <= 1; n <= 7; d <= port_in; end
+        9: begin t <= 0; end
+
+    endcase
+    // 18T XTHL
+    8'b1110_0011: case (t)
+
+        0: begin sw <= 1; cp <= sp; end
+        1: begin d[ 7:0] <= in; cp <= cpn; end
+        2: begin d[15:8] <= in; w <= 1; n <= 2; cp <= hl; end
+        3: begin we <= 1; out <= cp[7:0]; d[7:0] <= cp[15:8]; cp <= sp; end
+        4: begin we <= 1; out <= d[7:0]; cp <= cpn; end
+        17: begin sw <= 0; t <= 0; end
+
+    endcase
+    // 4T XCHG
+    8'b1110_1011: case (t)
+
+        0: begin d <= de; n <= 2; w <= 1; cp <= hl; end
+        1: begin d <= cp; n <= 1; w <= 1; end
+        3: begin t <= 0; end
+
+    endcase
+    // 11/17T CALL ccc
+    8'b11xx_x100,
+    8'b1100_1101: case (t)
+
+        1: begin d[ 7:0] <= in; pc <= pcn; end
+        2: begin d[15:8] <= in; pc <= pcn; end
+        3: begin we <= ccc; out <= pc[ 7:0]; sw <= 1; cp <= sp - 2; end
+        4: begin we <= ccc; out <= pc[15:8]; cp <= cpn; end
+        5: begin if (ccc) pc <= d[15:0]; end
+        6: begin w <= ccc; d <= sp - 2; n <= 3; end
+        10: begin t <= ccc ? 11 : 0; end
+        16: begin t <= 0; end
+
+    endcase
+    // 11T PUSH
+    8'b11xx_0101: case (t)
+
+        0: begin d <= sp - 2; w <= 1; n <= 3; sw <= 1; cp <= sp - 2; end
+        1: begin d <= opc[5:4] == 2'b11 ? {a, psw} : r16; end
+        2: begin we <= 1; out <= d[ 7:0]; end
+        3: begin we <= 1; out <= d[15:8]; cp <= cpn; end
+        10: begin sw <= 0; t <= 0; end
+
+    endcase
+    // 7T [ALU] Imm
+    8'b11xx_x110: case (t)
+
+        1: begin d <= alur; pc <= pcn; b <= (opc[5:3] != CMP); n <= 7; psw <= aluf; end
+        6: begin t <= 0; end
+
+    endcase
+    // 11T RST
+    8'b11xx_x111: case (t)
+
+        1: begin we <= 1; d <= sp - 2; n <= 3; w <= 1; cp <= sp - 2; sw <= 1; out <= pc[7:0]; end
+        2: begin we <= 1; out <= pc[15:8]; cp <= cpn; pc <= {opc[5:3], 3'b000}; end
+        10: begin t <= 0; end
 
     endcase
 

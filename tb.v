@@ -13,7 +13,7 @@ reg  [ 7:0] memory[65536];
 wire [15:0] address;
 wire [ 7:0] in = memory[address];
 wire [ 7:0] out;
-wire        we;
+wire        we, iff1;
 
 initial $readmemh("tb.hex", memory, 16'hF800);
 always @(posedge clock_100) if (we) memory[address] <= out;
@@ -26,8 +26,10 @@ KR580VM80ALite CORE
     .ce         (1'b1),
     .address    (address),
     .in         (in),
+    .port_in    (8'hFF),
     .out        (out),
-    .we         (we)
+    .we         (we),
+    .iff1       (iff1)
 );
 
 endmodule
