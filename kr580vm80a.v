@@ -425,7 +425,7 @@ else if (ce) begin
     8'b11xx_0101: case (t)
 
         0: begin d <= sp - 2; w <= 1; n <= 3; sw <= 1; cp <= sp - 2; end
-        1: begin d <= opc[5:4] == 2'b11 ? {a, psw} : r16; end
+        1: begin d <= opc[5:4] == 2'b11 ? {a, (psw & 8'b11010101) | 2'b10} : r16; end
         2: begin we <= 1; out <= d[ 7:0]; end
         3: begin we <= 1; out <= d[15:8]; cp <= cpn; end
         10: begin sw <= 0; t <= 0; end
@@ -443,7 +443,7 @@ else if (ce) begin
 
         1: begin we <= 1; d <= sp - 2; n <= 3; w <= 1; cp <= sp - 2; sw <= 1; out <= pc[7:0]; end
         2: begin we <= 1; out <= pc[15:8]; cp <= cpn; pc <= {opc[5:3], 3'b000}; end
-        10: begin t <= 0; end
+        10: begin sw <= 0; t <= 0; end
 
     endcase
 
