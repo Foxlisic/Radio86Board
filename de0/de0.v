@@ -97,5 +97,21 @@ pll PLL0
     .locked    (locked)
 );
 
+// --------------------------------------------------------------
+assign {VGA_R, VGA_G, VGA_B} = {{4{r}}, {4{g}}, {4{b}}};
+
+vg75 VideoAdapter
+(
+    .clock  (clock_25),
+    .r      (r),
+    .g      (g),
+    .b      (b),
+    .hs     (VGA_HS),
+    .vs     (VGA_VS),
+);
+
+// --------------------------------------------------------------
 
 endmodule
+
+`include "../vg75.v"

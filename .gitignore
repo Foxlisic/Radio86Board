@@ -3,4 +3,5 @@ applicate/
 *.hex
 *.qqq
 *.vcd
+*.qdf
 vendor/
