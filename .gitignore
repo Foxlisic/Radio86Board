@@ -1,7 +1,9 @@
-applicate/
 *.gtkw
 *.hex
 *.qqq
 *.vcd
 *.qdf
+obj_dir
 vendor/
+applicate/
+tb
