@@ -9,6 +9,7 @@ module KR580VM80ALite
     input       [ 7:0]  in,
     input       [ 7:0]  port_in,
     output reg  [ 7:0]  out,
+    output reg          rd,
     output reg          we,
     output reg          port_we,
     output reg          iff1
@@ -95,10 +96,11 @@ wire [7:0] aluf =
 
 always @(posedge clock)
 if (reset_n == 0) begin
-    t  <= 0;        // Установить чтение кода на начало
-    sw <= 0;        // Позиционировать память к PC
-    pc <= 16'hF800; // Указатель на программу "Монитор"
-    iff1 <= 0;       // Отключение прерываний
+    t    <= 0;        // Установить чтение кода на начало
+    sw   <= 0;        // Позиционировать память к PC
+    pc   <= 16'hF800; // Указатель на программу "Монитор"
+    iff1 <= 0;        // Отключение прерываний
+    rd   <= 1;
 end
 else if (ce) begin
 
@@ -106,6 +108,7 @@ else if (ce) begin
     b  <= 0;        // Выключить запись в регистр (по умолчанию) 8bit
     w  <= 0;        // Выключить запись в регистр (по умолчанию) 16bit
     we <= 0;        // Аналогично, выключить запись в память (по умолчанию)
+    rd <= 0;        // Сигнал запроса чтения из памяти
     port_we <= 0;   // Запись в порт
 
     // Запись опкода на первом такте выполнения инструкции
@@ -121,15 +124,16 @@ else if (ce) begin
     // 4T NOP
     8'b0000_0000: case (t)
 
-        3: begin t <= 0; end
+        3: begin t <= 0; rd <= 1; end
 
     endcase
     // 10T LXI R,**
     8'b00xx_0001: case (t)
 
-        1: begin pc <= pcn; d[ 7:0] <= in; n <= opcode[5:4]; end
+        0: begin rd <= 1; end
+        1: begin pc <= pcn; d[ 7:0] <= in; n <= opcode[5:4]; rd <= 1; end
         2: begin pc <= pcn; d[15:8] <= in; w <= 1; end
-        9: begin t <= 0; end
+        9: begin t <= 0; rd <= 1; end
 
     endcase
     // 10T DAD R
@@ -137,64 +141,67 @@ else if (ce) begin
 
         0: begin d <= hl + r16; w <= 1; n <= 2; end
         1: begin psw[CF] <= d[16]; end
-        9: begin t <= 0; end
+        9: begin t <= 0; rd <= 1; end
 
     endcase
     // 7T STAX B|D
     8'b000x_0010: case (t)
 
         0: begin we <= 1; out <= a; cp <= r16; sw <= 1; end
-        6: begin sw <= 0; t <= 0; end
+        6: begin sw <= 0; t <= 0; rd <= 1; end
 
     endcase
     // 7T LDAX B|D
     8'b000x_1010: case (t)
 
-        0: begin cp <= r16; sw <= 1; end
+        0: begin cp <= r16; sw <= 1; rd <= 1; end
         1: begin b  <= 1; n <= 7; d <= in; end
-        6: begin sw <= 0; t <= 0; end
+        6: begin sw <= 0; t <= 0; rd <= 1; end
 
     endcase
     // 16T [22] SHLD **
     8'b0010_0010: case (t)
 
-        1: begin cp[ 7:0] <= in; pc <= pcn; end
+        0: begin rd <= 1; end
+        1: begin cp[ 7:0] <= in; pc <= pcn; rd <= 1; end
         2: begin cp[15:8] <= in; pc <= pcn; sw <= 1; end
         3: begin we <= 1; out <= hl[ 7:0]; end
         4: begin we <= 1; out <= hl[15:8]; cp <= cpn; end
-        15: begin sw <= 0; t <= 0; end
+        15: begin sw <= 0; t <= 0; rd <= 1; end
 
     endcase
-    // 16T [2A] LDHL **
+    // 16T [2A] LDHL ** -- Чтение из 16-битного адреса в памяти в HL
     8'b0010_1010: case (t)
 
-        1: begin cp[ 7:0] <= in; pc <= pcn; end
-        2: begin cp[15:8] <= in; pc <= pcn; sw <= 1; end
-        3: begin d [ 7:0] <= in; cp <= cpn; end
+        0: begin rd <= 1; end
+        1: begin cp[ 7:0] <= in; pc <= pcn; rd <= 1; end
+        2: begin cp[15:8] <= in; pc <= pcn; rd <= 1; sw <= 1; end
+        3: begin d [ 7:0] <= in; rd <= 1; cp <= cpn; end
         4: begin d [15:8] <= in; w <= 1; n <= 2; sw <= 0; end
-        15: begin t <= 0; end
+        15: begin t <= 0; rd <= 1; end
 
     endcase
-    // 13T [32,3A] STA|LDA **
+    // 13T [32,3A] STA|LDA ** -- Запись A в 16-битный адрес или чтение в A из 16-битного адреса
     8'b0011_x010: case (t)
 
-        1: begin cp[ 7:0] <= in; pc <= pcn; end
-        2: begin cp[15:8] <= in; pc <= pcn; sw <= 1; we <= ~opc[3]; out <= a; end
+        0: begin rd <= 1; end
+        1: begin cp[ 7:0] <= in; pc <= pcn; rd <= 1; end
+        2: begin cp[15:8] <= in; pc <= pcn; sw <= 1; we <= ~opc[3]; rd <= opc[3]; out <= a; end
         3: begin d <= in; b <= opc[3]; n <= 7; sw <= 0; end
-        12: begin t <= 0; end
+        12: begin t <= 0; rd <= 1; end
 
     endcase
     // 5T DCX|INX R
     8'b00xx_x011: case (t)
 
         0: begin w <= 1; n <= in[5:4]; d <= in[3] ? r16 - 1 : r16 + 1; end
-        4: begin t <= 0; end
+        4: begin t <= 0; rd <= 1; end
 
     endcase
     // 5/10T INR|DCR RM
     8'b00xx_x10x: case (t)
 
-        0: begin cp <= hl; sw <= 1; end
+        0: begin cp <= hl; sw <= 1; rd <= 1; end
         1: begin d <= opc[0] ? op53 - 1 : op53 + 1; end
         2: begin
 
@@ -209,13 +216,14 @@ else if (ce) begin
             out <= d;
 
         end
-        4: begin sw <= 0; t <= m53 ? 5 : 0; end
-        9: begin t <= 0; end
+        4: begin sw <= 0; t <= m53 ? 5 : 0; rd <= m53 ? 0 : 1; end
+        9: begin t <= 0; rd <= 1; end
 
     endcase
     // 7T MVI RM,*
     8'b00xx_x110: case (t)
 
+        0: begin rd <= 1; end
         1: begin
 
             pc  <= pcn;      // PC = PC + 1
@@ -228,8 +236,8 @@ else if (ce) begin
             out <= in;       // Данные для записи в память
 
         end
-        6: begin t <= sw ? 7 : 0; sw <= 0; end
-        9: begin t <= 0; end
+        6: begin t <= sw ? 7 : 0; sw <= 0; rd <= sw ? 0 : 1; end
+        9: begin t <= 0; rd <= 1; end
 
     endcase
     // 4T [07] RLC, [0F] RRC, [17] RAL, [1F] RAR
@@ -251,7 +259,7 @@ else if (ce) begin
 
         end
 
-        3: begin t <= 0; end
+        3: begin t <= 0; rd <= 1; end
 
     endcase
     // 4T [27] DAA
@@ -271,21 +279,21 @@ else if (ce) begin
             n <= 7;
 
         end
-        3: begin t <= 0; end
+        3: begin t <= 0; rd <= 1; end
 
     endcase
     // 4T [2F] CMA
     8'b0010_1111: case (t)
 
         0: begin d <= ~a; b <= 1; n <= 7; end
-        3: begin t <= 0; end
+        3: begin t <= 0; rd <= 1; end
 
     endcase
     // 4T [37] STC [3F] CMC
     8'b0011_x111: case (t)
 
         0: begin psw[CF] <= opc[3] ? ~psw[CF] : 1'b1; end
-        3: begin t <= 0; end
+        3: begin t <= 0; rd <= 1; end
 
     endcase
 
@@ -295,7 +303,7 @@ else if (ce) begin
     // 5/7T MOV x,x
     8'b01xx_xxxx: case (t)
 
-        0: begin cp <= hl; sw <= 1; if (m53 && m20) pc <= pc; end
+        0: begin cp <= hl; sw <= 1; rd <= m20; if (m53 && m20) pc <= pc; end
         1: begin
 
             n   <= opc[5:3];
@@ -305,17 +313,17 @@ else if (ce) begin
             out <= op20;
 
         end
-        4: begin sw <= 0; t <= (m53 || m20) ? 5 : 0; end
-        6: begin t <= 0; end
+        4: begin sw <= 0; t <= (m53 || m20) ? 5 : 0; rd <= (m53 || m20) ? 0 : 1; end
+        6: begin t <= 0; rd <= 1; end
 
     endcase
     // 5/7T [ALU] Op
     8'b10xx_xxxx: case (t)
 
-        0: begin cp <= hl; sw <= 1; end
+        0: begin cp <= hl; sw <= 1; rd <= m20; end
         1: begin d  <= alur; b <= (opc[5:3] != CMP); n <= 7; psw <= aluf; end
-        4: begin sw <= 0; t <= m20 ? 5 : 0; end
-        6: begin t  <= 0; end
+        4: begin sw <= 0; t <= m20 ? 5 : 0; rd <= m20 ? 0 : 1; end
+        6: begin t  <= 0; rd <= 1; end
 
     endcase
 
@@ -327,30 +335,30 @@ else if (ce) begin
     8'b11xx_x000,
     8'b1100_1001: case (t)
 
-        0: begin d <= sp + 2; w <= ccc; n <= 3; sw <= 1; cp <= sp; end
-        1: begin d[ 7:0] <= in; cp <= cpn; end
-        2: begin d[15:8] <= in; sw <= 0; end
-        4: begin t <= ccc ? 5 : 0; end
-        10: begin t <= 0; pc <= d; end
+        0:  begin d <= sp + 2; w <= ccc; n <= 3; sw <= 1; cp <= sp; rd <= 1; end
+        1:  begin d[ 7:0] <= in; cp <= cpn; rd <= 1; end
+        2:  begin d[15:8] <= in; sw <= 0; end
+        4:  begin t <= ccc ? 5 : 0; rd <= ccc ? 0 : 1; end
+        10: begin t <= 0; pc <= d; rd <= 1; end
 
     endcase
     // 11T POP
     8'b11xx_0001: case (t)
 
-        0: begin d <= sp + 2; w <= 1; n <= 3; sw <= 1; cp <= sp; end
-        1: begin d[ 7:0] <= in; cp <= cpn; end
-        2: begin d[15:8] <= in; sw <= 0; n <= opc[5:4]; w <= opc[5:4] != 3; end
-        3: begin if (opc[5:4] == 3) begin d[7:0] <= d[15:8]; psw <= d[7:0]; b <= 1; n <= 7; end end
-        10: begin t <= 0; end
+        0:  begin d <= sp + 2; w <= 1; n <= 3; sw <= 1; cp <= sp; rd <= 1; end
+        1:  begin d[ 7:0] <= in; cp <= cpn; rd <= 1;end
+        2:  begin d[15:8] <= in; sw <= 0; n <= opc[5:4]; w <= opc[5:4] != 3; end
+        3:  begin if (opc[5:4] == 3) begin d[7:0] <= d[15:8]; psw <= d[7:0]; b <= 1; n <= 7; end end
+        10: begin t <= 0; rd <= 1; end
 
     endcase
     // 5T [E9] PCHL
     8'b1110_1001: case (t)
 
-        4: begin pc <= hl; t <= 0; end
+        4: begin pc <= hl; t <= 0; rd <= 1; end
 
     endcase
-    // 5T [F9] SPHL
+    // 5T [F9] SPHL -- Записывается SP в HL (LD HL,SP)
     8'b1111_1001: case (t)
 
         0: begin d <= hl; w <= 1; n <= 3; end
@@ -361,64 +369,68 @@ else if (ce) begin
     8'b11xx_x010,
     8'b1100_0011: case (t)
 
-        1: begin cp[ 7:0] <= in; pc <= pcn; end
+        0: begin rd <= 1; end
+        1: begin cp[ 7:0] <= in; pc <= pcn; rd <= 1;end
         2: begin cp[15:8] <= in; pc <= pcn; end
-        9: begin t <= 0; if (ccc || opc[0]) pc <= cp; end
+        9: begin t <= 0; rd <= 1; if (ccc || opc[0]) pc <= cp; end
 
     endcase
     // 4T DI, EI
     8'b1111_x011: case (t)
 
         0: begin iff1 <= opc[3]; end
-        3: begin t <= 0; end
+        3: begin t <= 0; rd <= 1; end
 
     endcase
     // 10T OUT (*), A
     8'b1101_0011: case (t)
 
+        0: begin rd <= 1; end
         1: begin port <= in; port_we <= 1; out <= a; pc <= pcn; end
-        9: begin t <= 0; end
+        9: begin t <= 0; rd <= 1; end
 
     endcase
     // 10T IN A, (*)
     8'b1101_1011: case (t)
 
+        0: begin rd <= 1; end
         1: begin port <= in; pc <= pcn; end
         2: begin b <= 1; n <= 7; d <= port_in; end
-        9: begin t <= 0; end
+        9: begin t <= 0; rd <= 1; end
 
     endcase
-    // 18T XTHL
+    // 18T XTHL -- EX (SP),HL -- Обмен вершины стека с HL
     8'b1110_0011: case (t)
 
-        0: begin sw <= 1; cp <= sp; end
-        1: begin d[ 7:0] <= in; cp <= cpn; end
+        0: begin sw <= 1; cp <= sp; rd <= 1; end
+        1: begin d[ 7:0] <= in; cp <= cpn; rd <= 1; end
         2: begin d[15:8] <= in; w <= 1; n <= 2; cp <= hl; end
         3: begin we <= 1; out <= cp[7:0]; d[7:0] <= cp[15:8]; cp <= sp; end
         4: begin we <= 1; out <= d[7:0]; cp <= cpn; end
-        17: begin sw <= 0; t <= 0; end
+        17: begin sw <= 0; t <= 0; rd <= 1; end
 
     endcase
-    // 4T XCHG
+    // 4T XCHG -- EX DE,HL
     8'b1110_1011: case (t)
 
         0: begin d <= de; n <= 2; w <= 1; cp <= hl; end
         1: begin d <= cp; n <= 1; w <= 1; end
-        3: begin t <= 0; end
+        3: begin t <= 0; rd <= 1; end
 
     endcase
     // 11/17T CALL ccc
     8'b11xx_x100,
     8'b1100_1101: case (t)
 
-        1: begin d[ 7:0] <= in; pc <= pcn; end
+        0: begin rd <= 1; end
+        1: begin d[ 7:0] <= in; pc <= pcn; rd <= 1; end
         2: begin d[15:8] <= in; pc <= pcn; end
         3: begin we <= ccc; out <= pc[ 7:0]; sw <= 1; cp <= sp - 2; end
         4: begin we <= ccc; out <= pc[15:8]; cp <= cpn; end
         5: begin if (ccc) pc <= d[15:0]; end
         6: begin w <= ccc; d <= sp - 2; n <= 3; end
-        10: begin t <= ccc ? 11 : 0; end
-        16: begin t <= 0; end
+        10: begin t <= ccc ? 11 : 0; rd <= ccc ? 0 : 1;end
+        16: begin t <= 0; rd <= 1; end
 
     endcase
     // 11T PUSH
@@ -428,12 +440,13 @@ else if (ce) begin
         1: begin d <= opc[5:4] == 2'b11 ? {a, (psw & 8'b11010101) | 2'b10} : r16; end
         2: begin we <= 1; out <= d[ 7:0]; end
         3: begin we <= 1; out <= d[15:8]; cp <= cpn; end
-        10: begin sw <= 0; t <= 0; end
+        10: begin sw <= 0; t <= 0; rd <= 1; end
 
     endcase
     // 7T [ALU] Imm
     8'b11xx_x110: case (t)
 
+        0: begin rd <= 1; end
         1: begin d <= alur; pc <= pcn; b <= (opc[5:3] != CMP); n <= 7; psw <= aluf; end
         6: begin t <= 0; end
 
@@ -443,7 +456,7 @@ else if (ce) begin
 
         1: begin we <= 1; d <= sp - 2; n <= 3; w <= 1; cp <= sp - 2; sw <= 1; out <= pc[7:0]; end
         2: begin we <= 1; out <= pc[15:8]; cp <= cpn; pc <= {opc[5:3], 3'b000}; end
-        10: begin sw <= 0; t <= 0; end
+        10: begin sw <= 0; t <= 0; rd <= 1; end
 
     endcase
 

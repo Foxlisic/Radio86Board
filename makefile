@@ -1,6 +1,6 @@
 VRL=/usr/share/verilator/include
 
-all: app
+all: ica
 app: vbuild
 	g++ -o tb -I$(VRL) $(VRL)/verilated.cpp tb.cc obj_dir/Vvg75__ALL.a -lSDL2
 	./tb
