@@ -23,6 +23,7 @@ protected:
 
     // Модули
     Vvg75* vg75_mod;
+    Vkr580vm80a* core8080;
 
 public:
 
@@ -35,6 +36,7 @@ public:
 
         pticks       = 0;
         vg75_mod     = new Vvg75();
+        core8080     = new Vkr580vm80a();
 
         // Удвоение пикселей
         scale        = 2;
@@ -58,11 +60,27 @@ public:
             memory[0xE6A0 + i] = (1*i) & 255;
         }
 
+        // Загрузка MONITOR в память
+        if (argc > 1) {
+            FILE* fp = fopen(argv[1], "rb");
+            if (fp) {
+                fread(memory + 0xF800, 1, 2048, fp);
+                fclose(fp);
+            }
+        }
+
         // Сброс видеоконтроллера
         vg75_mod->reset_n = 0;
         vg75_mod->clock   = 1; vg75_mod->eval();
         vg75_mod->clock   = 0; vg75_mod->eval();
         vg75_mod->reset_n = 1;
+
+        // Сброс процессора
+        core8080->ce      = 1;
+        core8080->reset_n = 0;
+        core8080->clock   = 0; core8080->eval();
+        core8080->clock   = 1; core8080->eval();
+        core8080->reset_n = 1;
     }
 
     int main() {
@@ -93,6 +111,19 @@ public:
     // Один такт 25 мгц
     void tick() {
 
+        // Сначала запись
+        if (core8080->we) {
+            memory[core8080->address] = core8080->out;
+        }
+
+        // А потом чтение
+        core8080->in = memory[core8080->address];
+
+        // Взаимодействие с видеоконтроллером
+        vg75_mod->cpu_address = core8080->address;
+        vg75_mod->cpu_out     = core8080->out;
+        vg75_mod->cpu_we      = core8080->we;
+
         // Подключение ПЗУ шрифтов
         vg75_mod->font_in = fontrom[vg75_mod->font_address];
         vg75_mod->in      = memory[vg75_mod->address];
@@ -100,6 +131,10 @@ public:
         // VGA
         vg75_mod->clock = 1; vg75_mod->eval();
         vg75_mod->clock = 0; vg75_mod->eval();
+
+        // CPU
+        core8080->clock = 0; core8080->eval();
+        core8080->clock = 1; core8080->eval();
 
         vg75(vg75_mod->hs, vg75_mod->vs, (vg75_mod->r*192)*65536 + (vg75_mod->g*192)*256 + (vg75_mod->b*192));
     }

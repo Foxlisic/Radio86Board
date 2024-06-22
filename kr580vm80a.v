@@ -1,3 +1,7 @@
+/* verilator lint_off WIDTH */
+/* verilator lint_off CASEX */
+/* verilator lint_off CASEINCOMPLETE */
+
 module KR580VM80ALite
 (
     input               clock,

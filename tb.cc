@@ -1,4 +1,5 @@
 #include "obj_dir/Vvg75.h"
+#include "obj_dir/Vkr580vm80a.h"
 #include "tb.h"
 
 int main(int argc, char** argv) {
